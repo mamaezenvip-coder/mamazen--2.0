@@ -1,0 +1,9 @@
+{
+  "name": " Mamãe Zen 2.0 GRINGO",
+  "description": "Seu assistente completo de maternidade com IA.",
+  "requestFramePermissions": [
+    "microphone",
+    "geolocation"
+  ],
+  "prompt": "An app called Mamãe Zen 2.0 that helps mothers with baby cry analysis, specialist advice, and finding nearby places."
+}
