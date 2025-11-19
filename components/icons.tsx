@@ -1,4 +1,3 @@
-
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -25,17 +24,6 @@ import {
   Key,
   ArrowRight,
   ChevronDown,
-  Film,
-  Images,
-  Plus,
-  Layers,
-  ImagePlus,
-  SlidersHorizontal,
-  Type,
-  Tv,
-  X,
-  RotateCw,
-  Siren,
   Music,
   Headphones,
   Pause,
@@ -70,18 +58,6 @@ export const ArrowLeftIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) =>
 export const KeyIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => <Key {...defaultProps} {...props} />;
 export const ArrowRightIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => <ArrowRight {...defaultProps} {...props} />;
 export const ChevronDownIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => <ChevronDown {...defaultProps} {...props} />;
-export const FilmIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => <Film {...defaultProps} {...props} />;
-export const FramesModeIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => <Images {...defaultProps} {...props} />;
-export const PlusIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => <Plus {...defaultProps} {...props} />;
-export const RectangleStackIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => <Layers {...defaultProps} {...props} />;
-export const ReferencesModeIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => <ImagePlus {...defaultProps} {...props} />;
-export const SlidersHorizontalIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => <SlidersHorizontal {...defaultProps} {...props} />;
-export const TextModeIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => <Type {...defaultProps} {...props} />;
-export const TvIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => <Tv {...defaultProps} {...props} />;
-export const XMarkIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => <X {...defaultProps} {...props} />;
-export const ArrowPathIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => <RotateCw {...defaultProps} {...props} />;
-export const SirenIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => <Siren {...defaultProps} {...props} />;
-
 // New Icons for Sound Therapy
 export const MusicIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => <Music {...defaultProps} {...props} />;
 export const HeadphonesIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => <Headphones {...defaultProps} {...props} />;

@@ -14,6 +14,7 @@ interface SpecialistChatProps {
 
 const SpecialistChat: React.FC<SpecialistChatProps> = ({ onBack, initialSpecialist }) => {
   const [selectedSpecialist, setSelectedSpecialist] = useState<SpecialistType | null>(initialSpecialist || null);
+  // Fix: Correctly initialize messages as an array of chat message objects
   const [messages, setMessages] = useState<{role: string, parts: {text: string}[]}[]>([]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -35,21 +36,39 @@ const SpecialistChat: React.FC<SpecialistChatProps> = ({ onBack, initialSpeciali
     setInputText('');
     setIsLoading(true);
 
-    // Optimistic UI
     const newHistory = [...messages, { role: 'user', parts: [{ text: userMsg }] }];
-    setMessages(newHistory);
+    setMessages(newHistory); // Update with user message immediately
 
     try {
-      const response = await sendSpecialistMessage(userMsg, messages, selectedSpecialist);
-      if (response) {
-        setMessages([...newHistory, { role: 'model', parts: [{ text: response }] }]);
+      const responseStream = sendSpecialistMessage(userMsg, messages, selectedSpecialist);
+      let modelResponseText = '';
+      const modelMessageIndex = newHistory.length; // Index for the new model message
+
+      // Initialize the model's message in history for streaming
+      setMessages((prevMessages) => [
+        ...prevMessages,
+        { role: 'model', parts: [{ text: '' }] },
+      ]);
+
+      for await (const chunk of responseStream) {
+        modelResponseText += chunk;
+        setMessages((prevMessages) => {
+          const updatedMessages = [...prevMessages];
+          if (updatedMessages[modelMessageIndex]) {
+            updatedMessages[modelMessageIndex].parts[0].text = modelResponseText;
+          }
+          return updatedMessages;
+        });
       }
     } catch (error) {
       console.error(error);
-      // Fallback error message
-      setMessages([...newHistory, { role: 'model', parts: [{ text: 'Desculpe, tive um problema ao processar. Pode tentar novamente?' }] }]);
+      setMessages((prevMessages) => [
+        ...prevMessages, 
+        { role: 'model', parts: [{ text: 'Desculpe, tive um problema ao processar. Pode tentar novamente?' }] }
+      ]);
     } finally {
       setIsLoading(false);
+      scrollToBottom(); // Scroll to bottom after response is fully streamed
     }
   };
 
@@ -62,25 +81,27 @@ const SpecialistChat: React.FC<SpecialistChatProps> = ({ onBack, initialSpeciali
     ];
 
     return (
-      <div className="p-4 space-y-6">
-        <h2 className="text-2xl font-bold text-gray-800 mt-4 mb-6">Com quem você quer falar?</h2>
-        <div className="space-y-4">
-          {specialists.map((s) => (
-            <button
-              key={s.type}
-              onClick={() => setSelectedSpecialist(s.type)}
-              className="w-full bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 transition-transform hover:scale-[1.02]"
-            >
-              <div className={`${s.color} p-4 rounded-full shadow-md`}>
-                {s.icon}
-              </div>
-              <div className="flex-1 text-left">
-                <h3 className="font-bold text-lg text-gray-800">{s.type}</h3>
-                <p className="text-sm text-gray-500">{s.desc}</p>
-              </div>
-              <ChevronRightIcon className="text-gray-300" />
-            </button>
-          ))}
+      <div className="flex flex-col h-full min-h-[calc(100vh-theme(spacing.20))] bg-[#f8f9fa]"> {/* min-h adjustment */}
+        <div className="p-4 space-y-6 flex-1">
+          <h2 className="text-2xl font-bold text-gray-800 mt-4 mb-6">Com quem você quer falar?</h2>
+          <div className="space-y-4">
+            {specialists.map((s) => (
+              <button
+                key={s.type}
+                onClick={() => setSelectedSpecialist(s.type)}
+                className="w-full bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 transition-transform hover:scale-[1.02]"
+              >
+                <div className={`${s.color} p-4 rounded-full shadow-md`}>
+                  {s.icon}
+                </div>
+                <div className="flex-1 text-left">
+                  <h3 className="font-bold text-lg text-gray-800">{s.type}</h3>
+                  <p className="text-sm text-gray-500">{s.desc}</p>
+                </div>
+                <ChevronRightIcon className="text-gray-300" />
+              </button>
+            ))}
+          </div>
         </div>
       </div>
     );
@@ -88,7 +109,7 @@ const SpecialistChat: React.FC<SpecialistChatProps> = ({ onBack, initialSpeciali
 
   // Chat View
   return (
-    <div className="flex flex-col h-full relative bg-[#f8f9fa]">
+    <div className="flex flex-col h-full min-h-[calc(100vh-theme(spacing.20))] relative bg-[#f8f9fa]"> {/* min-h adjustment */}
       {/* Header */}
       <div className="bg-white p-4 flex items-center gap-3 shadow-sm z-10 sticky top-0">
         <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-full">

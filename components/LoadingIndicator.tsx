@@ -5,25 +5,16 @@
 import React, { useState, useEffect } from 'react';
 
 const loadingMessages = [
-  "Warming up the digital director...",
-  "Gathering pixels and photons...",
-  "Storyboarding your vision...",
-  "Consulting with the AI muse...",
-  "Rendering the first scene...",
-  "Applying cinematic lighting...",
-  "This can take a few minutes, hang tight!",
-  "Adding a touch of movie magic...",
-  "Composing the final cut...",
-  "Polishing the masterpiece...",
-  "Teaching the AI to say 'I'll be back'...",
-  "Checking for digital dust bunnies...",
-  "Calibrating the irony sensors...",
-  "Untangling the timelines...",
-  "Enhancing to ludicrous speed...",
-  "Don't worry, the pixels are friendly.",
-  "Harvesting nano banana stems...",
-  "Praying to the Gemini star...",
-  "Starting a draft for your oscar speech..."
+  "Preparando a magia da IA...",
+  "Consultando a base de conhecimento...",
+  "Ajustando os algoritmos...",
+  "Pensando em uma resposta perfeita...",
+  "Organizando ideias inovadoras...",
+  "Um momento, por favor!",
+  "Quase lá...",
+  "Conectando os pontos...",
+  "O Mamãe Zen está trabalhando para você...",
+  "Gerando informações úteis...",
 ];
 
 const LoadingIndicator: React.FC = () => {
@@ -38,10 +29,13 @@ const LoadingIndicator: React.FC = () => {
   }, []);
 
   return (
-    <div className="flex flex-col items-center justify-center p-12 bg-gray-800/50 rounded-lg border border-gray-700">
-      <div className="w-16 h-16 border-4 border-t-transparent border-indigo-500 rounded-full animate-spin"></div>
-      <h2 className="text-2xl font-semibold mt-8 text-gray-200">Generating Your Video</h2>
-      <p className="mt-2 text-gray-400 text-center transition-opacity duration-500">
+    <div className="flex flex-col items-center justify-center p-12 bg-white rounded-2xl shadow-xl border border-pink-100 text-center animate-fade-in">
+      <div className="relative mb-6">
+        <div className="absolute inset-0 bg-primary/20 rounded-full animate-ping opacity-75"></div>
+        <div className="w-20 h-20 border-4 border-t-transparent border-primary rounded-full animate-spin relative z-10"></div>
+      </div>
+      <h2 className="text-2xl font-bold mt-4 text-gray-800">Processando...</h2>
+      <p className="mt-2 text-gray-600 text-sm transition-opacity duration-500">
         {loadingMessages[messageIndex]}
       </p>
     </div>

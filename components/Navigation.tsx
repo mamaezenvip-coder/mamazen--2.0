@@ -1,11 +1,10 @@
-
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
 */
 import React from 'react';
 import { AppView } from '../types';
-import { BabyIcon, HomeIcon, MapPinIcon, StethoscopeIcon, UtensilsIcon, MusicIcon } from './icons';
+import { BabyIcon, HomeIcon, MapPinIcon, StethoscopeIcon, MusicIcon } from './icons'; // FilmIcon removed
 
 interface NavigationProps {
   currentView: AppView;

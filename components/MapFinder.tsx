@@ -1,4 +1,3 @@
-
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -7,7 +6,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { findNearbyPlaces } from '../services/geminiService';
 import { MapPlace } from '../types';
 import { COMFORT_PHRASES_DB, PLACES_DB } from '../data/localDatabase';
-import { MapPinIcon, SearchIcon, AlertIcon, ArrowLeftIcon, ArrowRightIcon, SirenIcon, HeartIcon, SparklesIcon } from './icons';
+import { MapPinIcon, SearchIcon, AlertIcon, ArrowLeftIcon, ArrowRightIcon, HeartIcon, SparklesIcon, MaximizeIcon } from './icons';
+
+// Localização padrão para São Paulo, usada como fallback ou inicial.
+const DEFAULT_LOCATION = { lat: -23.5505, lng: -46.6333 }; 
 
 const MapFinder: React.FC = () => {
   const [viewMode, setViewMode] = useState<'list' | 'navigation'>('list');
@@ -15,36 +17,44 @@ const MapFinder: React.FC = () => {
   const [query, setQuery] = useState('');
   const [places, setPlaces] = useState<MapPlace[]>([]);
   const [loading, setLoading] = useState(false);
-  const [location, setLocation] = useState<{lat: number, lng: number} | null>(null);
-  const [locationError, setLocationError] = useState<string | null>(null);
+  // `location` agora é inicializado com DEFAULT_LOCATION e nunca é null.
+  const [location, setLocation] = useState<{lat: number, lng: number}>(DEFAULT_LOCATION); 
+  const [locationError, setLocationError] = useState<string | null>(null); // Mensagem de erro para o usuário
   const [selectedRoute, setSelectedRoute] = useState<MapPlace | null>(null);
   const [supportMessage, setSupportMessage] = useState("");
   
-  // Refs to handle audio stability
+  // Refs to handle audio stability and watchPosition ID
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
-  const navIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const navIntervalRef = useRef<number | null>(null);
+  const watchIdRef = useRef<number | null>(null); // To store watchPosition ID
+  const mapIframeRef = useRef<HTMLIFrameElement>(null); // Ref for map iframe
 
-  // Initial GPS Load
+  // 1. Carga Inicial do GPS e Verificação de Permissão (getCurrentPosition uma vez ao montar)
   useEffect(() => {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          const newLoc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-          setLocation(newLoc);
+          // Em sucesso, atualiza para a localização real
+          setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+          setLocationError(null); // Limpa quaisquer erros anteriores
         },
         (err) => {
-          console.warn(err);
-          setLocationError('Usando GPS Offline.');
-          // Fallback location (São Paulo)
-          setLocation({ lat: -23.5505, lng: -46.6333 });
+          console.warn('Initial geolocation error:', err);
+          if (err.code === err.PERMISSION_DENIED) {
+            setLocationError('Permissão de localização negada. Habilite o GPS nas configurações do seu navegador/dispositivo para usar todos os recursos.');
+          } else {
+            setLocationError('Não foi possível obter a localização atual. Verifique o GPS. Usando localização padrão (São Paulo).');
+          }
+          // Se houver erro, `location` permanece DEFAULT_LOCATION do estado inicial.
         },
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
       );
     } else {
-      setLocationError('GPS Offline.');
-      setLocation({ lat: -23.5505, lng: -46.6333 });
+      setLocationError('Geolocalização não suportada neste navegador. Usando localização padrão (São Paulo).');
+      // Se não suportado, `location` permanece DEFAULT_LOCATION.
     }
 
+    // Limpeza para síntese de fala e intervalos ao desmontar
     return () => {
       if (window.speechSynthesis) {
         window.speechSynthesis.cancel();
@@ -52,14 +62,54 @@ const MapFinder: React.FC = () => {
       if (navIntervalRef.current) {
         clearInterval(navIntervalRef.current);
       }
+      // watchPosition é gerenciado em seu próprio useEffect, então não precisa de clearWatch aqui.
     };
-  }, []);
+  }, []); // Executa apenas uma vez na montagem para localização inicial
 
-  // Helper to speak text reliably
+  // 2. Rastreamento Contínuo (watchPosition) baseado no viewMode e status de permissão
+  useEffect(() => {
+    const isPermissionDenied = locationError?.includes('Permissão de localização negada');
+    // watchPosition deve estar ativo se estivermos em navegação E a permissão NÃO foi negada.
+    const shouldWatch = viewMode === 'navigation' && !isPermissionDenied;
+
+    if (shouldWatch && watchIdRef.current === null) { 
+      // Inicia watch se as condições forem atendidas e não estiver assistindo
+      watchIdRef.current = navigator.geolocation.watchPosition(
+        (pos) => {
+          setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+          setLocationError(null); // Limpa erros se o sinal retornar
+        },
+        (err) => {
+          console.warn('Watch position error:', err);
+          // Apenas atualiza a mensagem de erro, NÃO altera a localização.
+          // O mapa deve continuar exibindo a última posição conhecida.
+          // Só atualiza o erro se não for uma permissão negada persistente.
+          if (!locationError?.includes('Permissão de localização negada')) {
+            setLocationError('Sinal GPS perdido durante a navegação. A rota pode não ser atualizada em tempo real.');
+          }
+        },
+        { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+      );
+    } else if (!shouldWatch && watchIdRef.current !== null) {
+      // Limpa watch se as condições não forem atendidas e estiver assistindo
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+
+    // Limpeza para este efeito específico
+    return () => {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+    };
+  }, [viewMode, locationError]); // Re-executa efeito quando viewMode ou locationError (para permissão negada) muda
+
+  // Helper para falar texto de forma confiável
   const speak = (text: string, rate = 1.0) => {
     if (!window.speechSynthesis) return;
     
-    // Cancel any current speech to avoid queue pileup on rapid clicks
+    // Cancela qualquer fala atual para evitar acúmulo na fila em cliques rápidos
     window.speechSynthesis.cancel(); 
 
     const speech = new SpeechSynthesisUtterance(text);
@@ -71,24 +121,27 @@ const MapFinder: React.FC = () => {
     window.speechSynthesis.speak(speech);
   };
 
-  // Continuous Support Voice Loop using DATABASE
+  // Loop de Voz de Suporte Contínuo usando DATABASE
   useEffect(() => {
     if (viewMode === 'navigation') {
       if (navIntervalRef.current) clearInterval(navIntervalRef.current);
 
-      // Start loop
+      // Inicia loop
       navIntervalRef.current = setInterval(() => {
-        // Use Local Database
         const phrase = COMFORT_PHRASES_DB[Math.floor(Math.random() * COMFORT_PHRASES_DB.length)];
         setSupportMessage(phrase);
         speak(phrase);
 
-        setTimeout(() => setSupportMessage(""), 8000);
-      }, 30000); // Speak every 30 seconds
+        setTimeout(() => setSupportMessage(""), 8000); // Limpa a mensagem após ~8 segundos
+      }, 30000); // Fala a cada 30 segundos
     } else {
       if (navIntervalRef.current) {
         clearInterval(navIntervalRef.current);
         navIntervalRef.current = null;
+      }
+      // Cancela a fala ao sair da navegação
+      if (window.speechSynthesis) {
+        window.speechSynthesis.cancel();
       }
     }
 
@@ -97,38 +150,50 @@ const MapFinder: React.FC = () => {
     };
   }, [viewMode]);
 
-  const handleSearch = async (searchQuery: string, customLocation?: {lat: number, lng: number}) => {
-    const loc = customLocation || location || { lat: -23.5505, lng: -46.6333 }; // Safe fallback
-    if (!searchQuery.trim()) return;
+  const handleSearch = async (searchQuery: string, customLocation?: {lat: number, lng: number}): Promise<MapPlace[]> => {
+    // Usa customLocation se fornecido, caso contrário, a localização atual, que sempre terá um valor (real ou padrão)
+    const loc = customLocation || location; 
+    if (!searchQuery.trim()) {
+      setPlaces([]); // Limpa os locais se a consulta estiver vazia
+      return [];
+    }
 
     setLoading(true);
-    setQuery(searchQuery);
+    setQuery(searchQuery); 
     try {
-      // Service will handle fallback to local DB if needed
       const results = await findNearbyPlaces(searchQuery, loc.lat, loc.lng);
       setPlaces(results);
+      return results;
     } catch (error) {
       console.error("Search error:", error);
-      setPlaces(PLACES_DB); // Ultra fallback
+      setPlaces(PLACES_DB); // Ultra fallback para pesquisa
+      return PLACES_DB;
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSOS = () => {
-    setQuery("Hospital Maternidade Emergência");
-    // Use current location or fallback immediately
-    const loc = location || { lat: -23.5505, lng: -46.6333 };
-    handleSearch("Hospital Maternidade Emergência", loc);
-  };
-
+  // Função para iniciar a navegação, agora incluindo o carregamento empático e a fala
   const startNavigation = (place: MapPlace) => {
-    setSelectedRoute(place);
-    setIsStartingNav(true);
+    const isPermissionDenied = locationError?.includes('Permissão de localização negada');
 
-    window.speechSynthesis.cancel();
+    if (isPermissionDenied) {
+      alert(locationError || 'Permissão de localização negada. Ative o GPS para navegar.');
+      return;
+    }
+    // Se a localização atual for a padrão (São Paulo), e não houver um erro específico de sinal perdido,
+    // significa que não conseguimos sua localização real.
+    if (location.lat === DEFAULT_LOCATION.lat && location.lng === DEFAULT_LOCATION.lng && 
+        !locationError?.includes('Sinal GPS perdido')) {
+      alert('Não foi possível obter sua localização atual. A navegação pode usar um ponto de partida aproximado (São Paulo). Por favor, ative o GPS.');
+      // Continua com a navegação usando a localização padrão, que getMapUrl irá gerenciar
+    }
     
-    // Use a specific database intro phrase
+    setSelectedRoute(place);
+    setIsStartingNav(true); // Aciona o carregamento empático
+
+    window.speechSynthesis.cancel(); 
+    
     setTimeout(() => {
         speak("Calma pais, seu bebê vai ficar bem. Deixe comigo que vou traçar a rota mais próxima com segurança. Apertem os cintos e vamos lá.", 0.9);
     }, 300);
@@ -136,7 +201,32 @@ const MapFinder: React.FC = () => {
     setTimeout(() => {
       setIsStartingNav(false);
       setViewMode('navigation');
-    }, 6000); // Wait for speech to finish approximately
+    }, 6000); // Espera a fala terminar aproximadamente
+  };
+
+  // Lida com a ação de navegação rápida do botão de entrada de pesquisa
+  const handleQuickNavigate = async () => {
+    if (!query.trim()) {
+      alert('Por favor, digite algo para buscar.');
+      return;
+    }
+    
+    const isPermissionDenied = locationError?.includes('Permissão de localização negada');
+    if (isPermissionDenied) {
+      alert(locationError || 'Permissão de localização negada. Ative o GPS para buscar e navegar.');
+      return;
+    }
+
+    setLoading(true);
+    // Passa a localização atual para handleSearch para resultados mais precisos
+    const results = await handleSearch(query, location); // Passa a melhor localização disponível
+    
+    if (results.length > 0) {
+      startNavigation(results[0]); // Navega automaticamente para o primeiro (mais próximo) resultado
+    } else {
+      setLoading(false); // Se não houver resultados, para o carregamento
+      alert('Nenhum local encontrado para a sua busca.');
+    }
   };
 
   const exitNavigation = () => {
@@ -145,6 +235,21 @@ const MapFinder: React.FC = () => {
     setViewMode('list');
     setSelectedRoute(null);
     setIsStartingNav(false);
+    // NÃO limpa locationError aqui, ele deve persistir até que o GPS se recupere ou o usuário altere as configurações
+  };
+
+  const toggleFullscreen = () => {
+    if (mapIframeRef.current) {
+      if (mapIframeRef.current.requestFullscreen) {
+        mapIframeRef.current.requestFullscreen();
+      } else if ((mapIframeRef.current as any).mozRequestFullScreen) { /* Firefox */
+        (mapIframeRef.current as any).mozRequestFullScreen();
+      } else if ((mapIframeRef.current as any).webkitRequestFullscreen) { /* Chrome, Safari and Opera */
+        (mapIframeRef.current as any).webkitRequestFullscreen();
+      } else if ((mapIframeRef.current as any).msRequestFullscreen) { /* IE/Edge */
+        (mapIframeRef.current as any).msRequestFullscreen();
+      }
+    }
   };
 
   const categories = [
@@ -154,15 +259,20 @@ const MapFinder: React.FC = () => {
     { name: 'Parques', icon: '🌳' }
   ];
 
-  // Construct Map URL safely
-  const getMapUrl = (place: MapPlace) => {
-    // Fallback coordinates if missing in mock data
-    const lat = place.lat ?? -23.5505;
-    const lng = place.lng ?? -46.6333;
-    return `https://maps.google.com/maps?q=${lat},${lng}&t=m&z=17&output=embed`;
+  // Constrói a URL do Mapa com segurança com saddr e daddr para traçar a rota
+  const getMapUrl = (currentLocation: {lat: number, lng: number}, destinationPlace: MapPlace | null) => {
+    // currentLocation agora é garantido que não é null
+    const originLat = currentLocation.lat; 
+    const originLng = currentLocation.lng;
+
+    const destLat = destinationPlace?.lat ?? DEFAULT_LOCATION.lat; 
+    const destLng = destinationPlace?.lng ?? DEFAULT_LOCATION.lng + 0.01; // Usando um fallback ligeiramente diferente para o destino para visibilidade
+
+    // Usa saddr e daddr para forçar o rastreamento da rota
+    return `https://maps.google.com/maps?saddr=${originLat},${originLng}&daddr=${destLat},${destLng}&t=m&z=17&output=embed`;
   };
 
-  // --- EMPATHETIC LOADING SCREEN ---
+  // --- TELA DE CARREGAMENTO EMPÁTICA ---
   if (isStartingNav) {
     return (
       <div className="fixed inset-0 z-50 bg-gradient-to-br from-pink-50 to-white flex flex-col items-center justify-center p-8 text-center animate-fade-in">
@@ -188,7 +298,7 @@ const MapFinder: React.FC = () => {
     );
   }
 
-  // --- NAVIGATION VIEW (PREMIUM 4D GPS) ---
+  // --- VISUALIZAÇÃO DE NAVEGAÇÃO (GPS 4D Premium) ---
   if (viewMode === 'navigation' && selectedRoute) {
     return (
       <div className="fixed inset-0 bg-gray-900 z-50 flex flex-col h-full w-full animate-fade-in overflow-hidden">
@@ -204,19 +314,28 @@ const MapFinder: React.FC = () => {
         )}
 
         {/* Header / Status Bar */}
-        <div className="bg-gradient-to-r from-pink-500 to-purple-600 text-white p-4 pt-8 pb-6 rounded-b-[2rem] shadow-2xl z-20 relative">
+        <div className="bg-gradient-to-r from-pink-500 to-purple-600 text-white p-6 pt-8 pb-6 rounded-b-[2rem] shadow-2xl z-20 relative"> {/* Increased padding */}
             <div className="flex items-center justify-between mb-4">
                 <button onClick={exitNavigation} className="p-2 bg-white/20 rounded-full hover:bg-white/30 transition-colors backdrop-blur-sm">
                     <ArrowLeftIcon className="w-6 h-6 text-white" />
                 </button>
                 <div className="flex flex-col items-center">
                     <span className="text-[10px] font-bold uppercase tracking-widest opacity-80">Satélite Mamãe Zen</span>
+                    {/* Status de GPS na navegação */}
                     <span className="text-sm font-bold flex items-center gap-2 bg-white/10 px-3 py-1 rounded-full mt-1 border border-white/20 backdrop-blur-md">
-                        <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse shadow-[0_0_10px_#4ade80]"></div>
-                        GPS Ativo
+                        <div className={`w-2 h-2 rounded-full animate-pulse ${locationError ? (locationError.includes('Permissão de localização negada') ? 'bg-red-400' : 'bg-yellow-400') : 'bg-green-400'} shadow-[0_0_10px_#4ade80]`}></div>
+                        {locationError ? (locationError.includes('Permissão de localização negada') ? 'GPS Desativado' : 'Sinal Instável') : 'GPS Ativo'}
                     </span>
+                    {locationError && <p className="text-red-300 text-[10px] mt-1 text-center">{locationError.includes('Permissão de localização negada') ? 'Habilite o GPS para rota em tempo real.' : locationError}</p>}
                 </div>
-                <div className="w-10"></div>
+                {/* Fullscreen Button (Re-added) */}
+                <button 
+                  onClick={toggleFullscreen} 
+                  className="p-2 bg-white/20 rounded-full hover:bg-white/30 transition-colors backdrop-blur-sm"
+                  aria-label="Expandir mapa em tela cheia"
+                >
+                  <MaximizeIcon className="w-6 h-6 text-white" />
+                </button>
             </div>
 
             {/* Direction Card */}
@@ -241,11 +360,13 @@ const MapFinder: React.FC = () => {
                 }}
             >
                 <iframe
+                    ref={mapIframeRef} // Attach ref here
                     width="100%"
                     height="100%"
                     frameBorder="0"
-                    style={{ border: 0, filter: 'contrast(1.1) saturate(1.1)' }}
-                    src={getMapUrl(selectedRoute)}
+                    // Night mode filter applied here
+                    style={{ border: 0, filter: 'invert(0.9) hue-rotate(180deg) brightness(0.9) contrast(1.1) saturate(1.1)' }}
+                    src={getMapUrl(location, selectedRoute)} // Pass current location and selected route
                     allowFullScreen
                     title="GPS Navigation"
                     className="w-full h-full"
@@ -254,7 +375,7 @@ const MapFinder: React.FC = () => {
             
             {/* Floating Premium HUD */}
             <div className="absolute bottom-8 left-4 right-4 pointer-events-none">
-                <div className="bg-white/90 backdrop-blur-xl rounded-3xl shadow-[0_10px_40px_rgba(0,0,0,0.2)] p-5 flex justify-between items-center border border-white/50 mb-4 pointer-events-auto">
+                <div className="bg-white/90 backdrop-blur-xl rounded-3xl shadow-[0_10px_40px_rgba(0,0,0,0.2)] p-6 flex justify-between items-center border border-white/50 mb-4 pointer-events-auto"> {/* Increased padding for more space */}
                     <div className="flex flex-col items-center px-2 border-r border-gray-200 flex-1">
                         <span className="text-[10px] text-gray-400 font-bold uppercase">Tempo Est.</span>
                         <span className="text-2xl font-bold text-primary">12<span className="text-sm text-gray-500 ml-0.5">min</span></span>
@@ -285,7 +406,7 @@ const MapFinder: React.FC = () => {
 
   // --- LIST VIEW ---
   return (
-    <div className="p-0 h-full flex flex-col bg-gray-50 pb-20">
+    <div className="p-0 h-full flex flex-col bg-gray-50 pb-20"> {/* Adjusted p-0, pb-20 for nav bar */}
       {/* Premium Header */}
       <div className="bg-white p-6 pb-4 rounded-b-3xl shadow-sm border-b border-pink-50">
         <div className="flex items-center justify-between mb-4">
@@ -296,22 +417,12 @@ const MapFinder: React.FC = () => {
                 </h2>
                 <p className="text-xs text-gray-500 mt-1">Localize o que seu bebê precisa</p>
             </div>
-            <div className={`flex items-center gap-1 text-[10px] font-bold px-3 py-1 rounded-full border ${location ? 'bg-green-100 text-green-700 border-green-200' : 'bg-yellow-100 text-yellow-700 border-yellow-200'}`}>
-                <div className={`w-2 h-2 rounded-full animate-pulse ${location ? 'bg-green-500' : 'bg-yellow-500'}`}></div>
-                {location ? 'GPS ON' : 'MODO OFFLINE'}
+            {/* Indicador de Status do GPS: ATIVO se location não for DEFAULT_LOCATION e não houver erro de permissão */}
+            <div className={`flex items-center gap-1 text-[10px] font-bold px-3 py-1 rounded-full border ${location.lat !== DEFAULT_LOCATION.lat && !locationError?.includes('Permissão de localização negada') ? 'bg-green-100 text-green-700 border-green-200' : 'bg-yellow-100 text-yellow-700 border-yellow-200'}`}>
+                <div className={`w-2 h-2 rounded-full animate-pulse ${location.lat !== DEFAULT_LOCATION.lat && !locationError?.includes('Permissão de localização negada') ? 'bg-green-500' : 'bg-yellow-500'}`}></div>
+                {location.lat !== DEFAULT_LOCATION.lat && !locationError?.includes('Permissão de localização negada') ? 'GPS ATIVO' : 'MODO OFFLINE'}
             </div>
         </div>
-
-        {/* SOS BUTTON */}
-        <button 
-            onClick={handleSOS}
-            className="w-full mb-4 bg-red-50 border border-red-100 rounded-2xl p-3 flex items-center justify-center gap-3 text-red-600 font-bold shadow-sm active:scale-95 transition-transform"
-        >
-            <div className="bg-red-100 p-2 rounded-full animate-pulse">
-                <SirenIcon className="w-5 h-5" />
-            </div>
-            SOS EMERGÊNCIA (Hospitais)
-        </button>
 
         {/* Search */}
         <div className="relative mb-4">
@@ -320,12 +431,13 @@ const MapFinder: React.FC = () => {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Buscar hospital, farmácia..." 
-                className="w-full bg-gray-100 border-none rounded-2xl py-3 pl-12 pr-12 focus:ring-2 focus:ring-primary/50 outline-none text-gray-700 placeholder-gray-400 shadow-inner transition-all"
+                className="w-full bg-gray-100 border-none shadow-md rounded-2xl py-3 pl-12 pr-12 focus:ring-2 focus:ring-primary/50 outline-none text-gray-700 placeholder-gray-400 shadow-inner transition-all"
             />
             <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
             <button 
-                onClick={() => handleSearch(query)}
+                onClick={handleQuickNavigate} // Chamada para handleQuickNavigate
                 className="absolute right-2 top-1/2 -translate-y-1/2 bg-primary hover:bg-pink-400 p-1.5 rounded-lg text-white transition-colors shadow-md"
+                aria-label="Buscar e Iniciar Navegação"
             >
                 <ArrowRightIcon className="w-4 h-4" />
             </button>
@@ -348,6 +460,26 @@ const MapFinder: React.FC = () => {
 
       {/* Content Area */}
       <div className="flex-1 p-4 overflow-y-auto">
+        {/* Mostra erro de permissão negada (permanente) */}
+        {locationError?.includes('Permissão de localização negada') && ( 
+          <div className="flex flex-col items-center justify-center h-64 opacity-80 text-center space-y-3 p-4 bg-red-50 border border-red-100 rounded-xl mb-4">
+              <div className="bg-red-100 p-4 rounded-full">
+                   <AlertIcon className="w-8 h-8 text-red-500" />
+              </div>
+              <p className="text-sm text-red-700 font-medium leading-relaxed">{locationError} <br/>Recursos de localização desativados.</p>
+          </div>
+        )}
+         {/* Mostra erros temporários de localização (ex: sinal perdido, mas não permissão negada) */}
+         {locationError && !locationError.includes('Permissão de localização negada') && (
+            <div className="p-3 bg-yellow-50 border border-yellow-100 rounded-xl flex items-start gap-3 mb-4">
+                <AlertIcon className="w-5 h-5 text-yellow-600 shrink-0 mt-0.5" />
+                <p className="text-xs text-yellow-800 leading-tight">
+                    {locationError} Os resultados ainda usam sua última localização conhecida ou padrão.
+                </p>
+            </div>
+         )}
+
+
         {loading ? (
             <div className="flex flex-col items-center justify-center h-64 space-y-4">
                 <div className="relative">
@@ -402,7 +534,7 @@ const MapFinder: React.FC = () => {
                 <div className="bg-gray-100 p-4 rounded-full">
                      <MapPinIcon className="w-8 h-8 text-gray-400" />
                 </div>
-                <p className="text-sm text-gray-500">Use o SOS para emergências ou busque<br/>para encontrar locais.</p>
+                <p className="text-sm text-gray-500">Busque para encontrar locais úteis.</p>
             </div>
         )}
       </div>

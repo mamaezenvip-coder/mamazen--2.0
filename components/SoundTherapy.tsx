@@ -1,12 +1,11 @@
-
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
 */
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { SOUND_TRACKS_DB } from '../data/localDatabase';
 import { SoundTrack } from '../types';
-import { HeadphonesIcon, MusicIcon, PauseIcon, PlayIcon, VolumeIcon, AlertIcon } from './icons';
+import { HeadphonesIcon, MusicIcon, PauseIcon, PlayIcon, VolumeIcon, SparklesIcon } from './icons';
 
 declare global {
   interface Window {
@@ -19,9 +18,12 @@ const SoundTherapy: React.FC = () => {
   const [activeCategory, setActiveCategory] = useState<'all' | 'baby' | 'nature' | 'womb' | 'mom'>('all');
   const [currentTrack, setCurrentTrack] = useState<SoundTrack | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [playerReady, setPlayerReady] = useState(false);
+  const [playerReady, setPlayerReady] = useState(false); // Indicates if YT API is loaded and onYouTubeIframeAPIReady has fired
+  const [isPlayerInitializing, setIsPlayerInitializing] = useState(false); // Indicates if YT.Player instance is being created
+  const [isTrackLoading, setIsTrackLoading] = useState(false); // Indicates if a track is actively loading/buffering in the player
   
-  const playerRef = useRef<any>(null);
+  const playerRef = useRef<any>(null); // Ref to hold the YouTube Player instance
+  const ytApiLoadedRef = useRef<boolean>(false); // To prevent loading YouTube API script multiple times
 
   const categories = [
     { id: 'all', label: 'Todos' },
@@ -35,9 +37,12 @@ const SoundTherapy: React.FC = () => {
     ? SOUND_TRACKS_DB 
     : SOUND_TRACKS_DB.filter(t => t.category === activeCategory);
 
-  // Load YouTube API
+  // 1. Load YouTube Iframe API script
   useEffect(() => {
-    if (!window.YT) {
+    if (!window.YT && !ytApiLoadedRef.current) {
+      ytApiLoadedRef.current = true; // Mark as attempting to load
+      setIsPlayerInitializing(true); // Indicate player API is loading
+
       const tag = document.createElement('script');
       tag.src = "https://www.youtube.com/iframe_api";
       const firstScriptTag = document.getElementsByTagName('script')[0];
@@ -45,69 +50,111 @@ const SoundTherapy: React.FC = () => {
 
       window.onYouTubeIframeAPIReady = () => {
         setPlayerReady(true);
+        setIsPlayerInitializing(false); // API script loaded
       };
-    } else {
+    } else if (window.YT && !playerReady) {
+      // If script somehow loaded without onYouTubeIframeAPIReady firing (e.g. fast refresh)
       setPlayerReady(true);
+      setIsPlayerInitializing(false);
+    }
+  }, [playerReady]);
+
+  // Callback for player state changes
+  const onPlayerStateChange = useCallback((event: any) => {
+    if (event.data === window.YT.PlayerState.PLAYING) {
+      setIsPlaying(true);
+      setIsTrackLoading(false);
+    } else if (event.data === window.YT.PlayerState.PAUSED || event.data === window.YT.PlayerState.ENDED) {
+      setIsPlaying(false);
+      setIsTrackLoading(false);
+    } else if (event.data === window.YT.PlayerState.BUFFERING) {
+      setIsTrackLoading(true);
+    } else {
+      setIsTrackLoading(false); // For other states like unstarted, cued
     }
   }, []);
 
-  // Initialize Player when track selected
+  // Callback for player ready event
+  const onPlayerReady = useCallback((event: any) => {
+    setIsPlayerInitializing(false); // Player instance is ready
+    if (currentTrack && isPlaying) {
+      event.target.playVideo();
+    }
+  }, [currentTrack, isPlaying]);
+
+  // 2. Initialize YouTube Player instance (only once per component lifecycle)
   useEffect(() => {
-    if (currentTrack && playerReady) {
-      // If player exists, just load new video
-      if (playerRef.current) {
-        playerRef.current.loadVideoById(currentTrack.youtubeId);
-        if (isPlaying) {
-             playerRef.current.playVideo();
+    if (playerReady && !playerRef.current && !isPlayerInitializing && currentTrack) {
+      setIsPlayerInitializing(true); // Mark player instance as being created
+      playerRef.current = new window.YT.Player('stealth-player', {
+        height: '1',
+        width: '1',
+        videoId: currentTrack.youtubeId,
+        playerVars: {
+          'playsinline': 1,
+          'controls': 0,
+          'disablekb': 1,
+          'fs': 0,
+          'autoplay': 0, // Do not autoplay on initial player creation
+        },
+        events: {
+          'onReady': onPlayerReady,
+          'onStateChange': onPlayerStateChange
         }
-      } else {
-        // Create new player
-        playerRef.current = new window.YT.Player('stealth-player', {
-          height: '1',
-          width: '1', // Stealth Mode
-          videoId: currentTrack.youtubeId,
-          playerVars: {
-            'playsinline': 1,
-            'controls': 0,
-            'disablekb': 1,
-            'fs': 0
-          },
-          events: {
-            'onReady': (event: any) => {
-                if (isPlaying) event.target.playVideo();
-            },
-            'onStateChange': (event: any) => {
-                if (event.data === window.YT.PlayerState.PLAYING) setIsPlaying(true);
-                if (event.data === window.YT.PlayerState.PAUSED) setIsPlaying(false);
-            }
-          }
-        });
+      });
+    }
+
+    // Cleanup: Destroy player when component unmounts
+    return () => {
+      if (playerRef.current && typeof playerRef.current.destroy === 'function') {
+        playerRef.current.destroy();
+        playerRef.current = null;
+        ytApiLoadedRef.current = false; // Reset for potential re-mounts
+        setPlayerReady(false);
+      }
+    };
+  }, [playerReady, isPlayerInitializing, currentTrack, onPlayerReady, onPlayerStateChange]); // currentTrack included to ensure player is created if currentTrack is set before playerReady
+
+  // 3. Load/Play video when currentTrack changes or play state changes
+  useEffect(() => {
+    if (playerRef.current && currentTrack) {
+      if (typeof playerRef.current.loadVideoById === 'function') {
+        // Only load a new video if the track actually changed
+        if (playerRef.current.getVideoData().video_id !== currentTrack.youtubeId) {
+          setIsTrackLoading(true);
+          playerRef.current.loadVideoById(currentTrack.youtubeId);
+        }
+        
+        // Control play/pause
+        if (isPlaying) {
+          playerRef.current.playVideo();
+        } else {
+          playerRef.current.pauseVideo();
+        }
       }
     }
-  }, [currentTrack, playerReady]);
-
-  // Toggle Play/Pause
-  useEffect(() => {
-    if (playerRef.current && playerRef.current.playVideo) {
-        if (isPlaying) {
-            playerRef.current.playVideo();
-        } else {
-            playerRef.current.pauseVideo();
-        }
-    }
-  }, [isPlaying]);
+  }, [currentTrack, isPlaying]); // Depend on currentTrack and isPlaying
 
   const handleTrackClick = (track: SoundTrack) => {
     if (currentTrack?.id === track.id) {
-      setIsPlaying(!isPlaying);
+      setIsPlaying(!isPlaying); // Toggle play/pause for the same track
     } else {
-      setIsPlaying(true);
+      // If a new track is selected, set it and start playing
       setCurrentTrack(track);
+      setIsPlaying(true);
+      setIsTrackLoading(true); // Indicate new track is loading
     }
   };
 
+  const getPlayerStatusMessage = () => {
+    if (isPlayerInitializing) return 'Carregando Player YouTube...';
+    if (!playerReady) return 'Aguardando API do YouTube...';
+    if (isTrackLoading && currentTrack) return `Carregando "${currentTrack.title}"...`;
+    return '';
+  };
+
   return (
-    <div className="flex flex-col h-full pb-32 bg-[#fff5f7]">
+    <div className="flex flex-col h-full bg-[#fff5f7] min-h-[calc(100vh-theme(spacing.20))]"> {/* Adjusted min-h for better space filling */}
       {/* Stealth Player Container - Hidden Visually but present in DOM */}
       <div className="absolute top-0 left-0 w-[1px] h-[1px] overflow-hidden opacity-0 pointer-events-none">
         <div id="stealth-player"></div>
@@ -121,6 +168,14 @@ const SoundTherapy: React.FC = () => {
         </h2>
         <p className="text-gray-500 text-sm mt-1">Relaxamento Profundo via Streaming</p>
         
+        {/* Player Loading Indicator */}
+        {(isPlayerInitializing || isTrackLoading) && (
+            <div className="flex items-center gap-2 mt-2 text-primary text-xs font-medium animate-pulse">
+                <SparklesIcon className="w-4 h-4 animate-spin" />
+                <span>{getPlayerStatusMessage()}</span>
+            </div>
+        )}
+
         {/* Categories */}
         <div className="flex gap-2 mt-4 overflow-x-auto pb-2 scrollbar-hide">
           {categories.map(cat => (
@@ -140,7 +195,7 @@ const SoundTherapy: React.FC = () => {
       </div>
 
       {/* Track Grid */}
-      <div className="p-4 overflow-y-auto grid grid-cols-2 gap-4 pb-32">
+      <div className="flex-1 p-4 overflow-y-auto grid grid-cols-2 gap-4 pb-24"> {/* Adjusted pb for navigation bar */}
         {filteredTracks.map(track => (
           <button
             key={track.id}
@@ -188,8 +243,8 @@ const SoundTherapy: React.FC = () => {
             <div className="flex flex-col overflow-hidden">
                <h4 className="font-bold text-sm truncate">{currentTrack.title}</h4>
                <div className="flex items-center gap-1 text-[10px] text-gray-300">
-                  {isPlaying ? <VolumeIcon className="w-3 h-3 text-green-400" /> : null}
-                  <span>{isPlaying ? 'Reproduzindo...' : 'Pausado'}</span>
+                  {isPlaying && !isTrackLoading ? <VolumeIcon className="w-3 h-3 text-green-400" /> : null}
+                  <span>{isTrackLoading ? 'Carregando...' : (isPlaying ? 'Reproduzindo...' : 'Pausado')}</span>
                </div>
             </div>
           </div>

@@ -1,4 +1,3 @@
-
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -28,32 +27,8 @@ import {
 
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<AppView>(AppView.DASHBOARD);
-  const [showApiKeyDialog, setShowApiKeyDialog] = useState(false);
   const [selectedSpecialist, setSelectedSpecialist] = useState<SpecialistType | null>(null);
   const [userName] = useState("Mamãe");
-
-  // Check API Key
-  useEffect(() => {
-    const checkApiKey = async () => {
-      if (window.aistudio) {
-        try {
-          if (!(await window.aistudio.hasSelectedApiKey())) {
-            setShowApiKeyDialog(true);
-          }
-        } catch (error) {
-          setShowApiKeyDialog(true);
-        }
-      }
-    };
-    checkApiKey();
-  }, []);
-
-  const handleApiKeyContinue = async () => {
-    setShowApiKeyDialog(false);
-    if (window.aistudio) {
-      await window.aistudio.openSelectKey();
-    }
-  };
 
   const handleSpecialistClick = (type: SpecialistType) => {
     setSelectedSpecialist(type);
@@ -85,7 +60,7 @@ const App: React.FC = () => {
       case AppView.DASHBOARD:
       default:
         return (
-          <div className="p-6 space-y-6 pb-24 animate-fade-in">
+          <div className="p-6 space-y-6 pb-24 animate-fade-in"> {/* pb-24 for navigation bar */}
             {/* Welcome Header */}
             <div className="mt-2">
               <h1 className="text-2xl font-bold text-gray-800">Olá, {userName} <span className="text-primary">♥</span></h1>
@@ -243,9 +218,6 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#fff0f3] font-sans overflow-x-hidden">
-      {showApiKeyDialog && (
-        <ApiKeyDialog onContinue={handleApiKeyContinue} />
-      )}
       
       <main className="max-w-md mx-auto bg-white min-h-screen shadow-2xl relative">
         {renderContent()}
